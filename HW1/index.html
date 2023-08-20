@@ -1,0 +1,694 @@
+<html>
+
+<head>
+<title>ICG HW1</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+<script type="text/javascript" src="./js/glMatrix-0.9.5.min.js"></script>
+<script type="text/javascript" src="./js/webgl-utils.js"></script>
+<script type="text/javascript" src="./js/utils.js"></script>
+
+<script type="text/javascript" src="./shaders/FlatVertex.js"></script>
+<script type="text/javascript" src="./shaders/FlatFragment.js"></script>
+<script type="text/javascript" src="./shaders/PhongVertex.js"></script>
+<script type="text/javascript" src="./shaders/PhongFragment.js"></script>
+<script type="text/javascript" src="./shaders/GouraudVertex.js"></script>
+<script type="text/javascript" src="./shaders/GouraudFragment.js"></script>
+
+<link rel="stylesheet" type="text/css" href="./js/css_style.css">
+
+<script type="text/javascript">
+    // shading method
+    FlatShading = {
+        "fragment": FlatFragmentShader,
+        "vertex": FlatVertexShader
+    }
+    PhongShading = {
+        "fragment": PhongFragmentShader,
+        "vertex": PhongVertexShader
+    }
+    GouraudShading = {
+        "fragment": GouraudFragmentShader,
+        "vertex": GouraudVertexShader
+    }
+
+    // common variables
+    var gl;
+    var FlatShadingProgram;
+    var PhongShadingProgram;
+    var GouraudShadingProgram;
+    var analyser;
+    var frequencyData = new Uint8Array();
+    // rendering method
+    var mode = 1;
+    // modeling and perspective matrixs
+    var mvMatrix = mat4.create();
+    var pMatrix  = mat4.create();
+    // object parameters
+    var obj_names = ["Teapot.json", "Teapot.json", "Teapot.json"];
+    var obj_default_shading = ['flat', 'phong', 'gouraud'];
+    var obj_vec = [];
+    var obj_default_trans = [vec3.create([-7., 0., -15.]), 
+                             vec3.create([0., 0., -15.]),  
+                             vec3.create([7., 0., -15.])];
+    var obj_trans = [vec3.create([-7., 0., -15.]), 
+                     vec3.create([0., 0., -15.]),  
+                     vec3.create([7., 0., -15.])];
+    var obj_default_rotate = [vec3.create([0., 0., 0.]), 
+                              vec3.create([0., 0., 0]), 
+                              vec3.create([0., 0., 0.])];
+                              
+    var obj_default_scale = [vec3.create([0.2, 0.2, 0.2]), 
+                             vec3.create([0.2, 0.2, 0.2]), 
+                             vec3.create([0.2, 0.2, 0.2])];
+    var obj_scale = [vec3.create([0.2, 0.2, 0.2]), 
+                     vec3.create([0.2, 0.2, 0.2]), 
+                     vec3.create([0.2, 0.2, 0.2])];
+
+    var obj_default_shear = vec3.create([90., 90., 90.]);
+    // light parameters
+    var light_locations = new Float32Array([0., 5., -10., 17., 5., -17., -17., 5., -17.]);
+    var light_colors = new Float32Array([0., 1., 1., 1., 0., 1., 1., 1., 0.])
+    var light_kdkscd = new Float32Array([0.6, 0.3, 20.0, 0.6, 0.3, 20.0, 0.6, 0.3, 20.0]);
+    // var light_kd
+    var ka = 0.1;
+    var ambiet_light_color = vec3.create([1., 1., 1.]);
+    // animation controls
+    var rotate_flag = false;
+    var lastTime = 0;
+    var random_light_flag = false;
+    var transparent = 1.0;
+
+
+    //*************************************************
+    // Initialization functions
+    //*************************************************
+    function initGL(canvas) {
+        try {
+            gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+            gl.getExtension('OES_standard_derivatives');
+            gl.viewportWidth  = canvas.width;
+            gl.viewportHeight = canvas.height;
+        } 
+        catch (e) {
+        }
+
+        if (!gl) {
+            alert("Could not initialise WebGL, sorry :-(");
+        }
+    }
+
+    function getShader(gl, shaderSource, type) {
+
+        var shader;
+        if (type == "fragment") {
+            shader = gl.createShader(gl.FRAGMENT_SHADER);
+        } 
+        else if (type == "vertex") {
+            shader = gl.createShader(gl.VERTEX_SHADER);
+        } 
+        else {
+            return null;
+        }
+
+        gl.shaderSource(shader, shaderSource[type]);
+        gl.compileShader(shader);
+
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            alert(gl.getShaderInfoLog(shader));
+            return null;
+        }
+
+        return shader;
+    }
+
+    function initShaders(ShaderMode) {
+        var fragmentShader = getShader(gl, ShaderMode, "fragment");
+        var vertexShader   = getShader(gl, ShaderMode, "vertex");
+
+        var shaderProgram = gl.createProgram();
+        gl.attachShader(shaderProgram, vertexShader);
+        gl.attachShader(shaderProgram, fragmentShader);
+        gl.linkProgram(shaderProgram);
+
+        if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+            alert("Could not initialise shaders");
+        }
+
+        // gl.useProgram(shaderProgram);
+
+        shaderProgram.vertexPositionAttribute = gl.getAttribLocation(shaderProgram, "aVertexPosition");
+        gl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+        shaderProgram.vertexFrontColorAttribute = gl.getAttribLocation(shaderProgram, "aFrontColor");
+        gl.enableVertexAttribArray(shaderProgram.vertexFrontColorAttribute);
+        shaderProgram.vertexNormalAttribute = gl.getAttribLocation(shaderProgram, "aVertexNormal");
+        gl.enableVertexAttribArray(shaderProgram.vertexNormalAttribute);
+
+        shaderProgram.pMatrixUniform  = gl.getUniformLocation(shaderProgram, "uPMatrix");
+        shaderProgram.mvMatrixUniform = gl.getUniformLocation(shaderProgram, "uMVMatrix");
+        shaderProgram.mode = gl.getUniformLocation(shaderProgram, "mode");
+
+        shaderProgram.light_locations = gl.getUniformLocation(shaderProgram, "lightLoc");
+        shaderProgram.light_colors = gl.getUniformLocation(shaderProgram, "lightColor");
+        shaderProgram.light_kdkscd = gl.getUniformLocation(shaderProgram, "lightKdKsCD");
+        shaderProgram.Ka = gl.getUniformLocation(shaderProgram, "Ka");
+        shaderProgram.Kd = gl.getUniformLocation(shaderProgram, "Kd");
+        shaderProgram.Ks = gl.getUniformLocation(shaderProgram, "Ks");
+        shaderProgram.Cd = gl.getUniformLocation(shaderProgram, "Cd");
+        shaderProgram.ambiet_light_color = gl.getUniformLocation(shaderProgram, "ambient_color");
+        
+        var context = new AudioContext();
+        var audio = document.getElementById('myAudio');
+        var audioSrc = context.createMediaElementSource(audio);
+        var sourceJs = context.createScriptProcessor(2048); 
+
+        analyser = context.createAnalyser();
+        analyser.smoothingTimeConstant = 0.6;
+        analyser.fftSize = 512;
+ 
+        audioSrc.connect(analyser);
+        analyser.connect(sourceJs);
+        sourceJs.buffer = audioSrc.buffer;
+        sourceJs.connect(context.destination);
+        audioSrc.connect(context.destination);
+
+        sourceJs.onaudioprocess = function(e) {
+            frequencyData = new Uint8Array(analyser.frequencyBinCount);
+            analyser.getByteFrequencyData(frequencyData);
+        };
+        
+        audio.play();
+        // gl.uniform1f( gl.getUniformLocation(shaderProgram, "volume"), 0.);
+
+        return shaderProgram
+    }
+
+    // function setMatrixUniforms(obj) {
+    //     gl.uniformMatrix4fv(shaderProgram.pMatrixUniform, false, obj.pMatrix);
+    //     gl.uniformMatrix4fv(shaderProgram.mvMatrixUniform, false, obj.mvMatrix);
+    // }
+
+    function degToRad(degrees) {
+        return degrees * Math.PI / 180;
+    }
+
+    function handleLoaded(obj, objData) {
+        obj.VertexPositionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, obj.VertexPositionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(objData.vertexPositions), gl.STATIC_DRAW);
+        obj.VertexPositionBuffer.itemSize = 3;
+        obj.VertexPositionBuffer.numItems = objData.vertexPositions.length / 3;
+
+        obj.VertexNormalBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, obj.VertexNormalBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(objData.vertexNormals), gl.STATIC_DRAW);
+        obj.VertexNormalBuffer.itemSize = 3;
+        obj.VertexNormalBuffer.numItems = objData.vertexNormals.length / 3;
+
+        obj.VertexFrontColorBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, obj.VertexFrontColorBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(objData.vertexFrontcolors), gl.STATIC_DRAW);
+        obj.VertexFrontColorBuffer.itemSize = 3;
+        obj.VertexFrontColorBuffer.numItems = objData.vertexFrontcolors.length / 3;
+    }
+
+    function loadObj(obj) {
+        var request = new XMLHttpRequest();
+        request.open("GET", "./model/"+obj.name);
+        request.onreadystatechange = function () {
+            if (request.readyState == 4) {
+                handleLoaded(obj, JSON.parse(request.responseText));
+            }
+        }
+        request.send();
+    }
+
+    //*************************************************
+    // Rendering functions
+    //*************************************************
+    function drawScene() {
+        gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+        gl.clearColor(ka*ambiet_light_color[0], ka*ambiet_light_color[1], ka*ambiet_light_color[2], transparent);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        for(var i=0 ; i<3 ; ++i)
+        {
+
+            if (obj_vec[i].VertexPositionBuffer == null ||  obj_vec[i].VertexNormalBuffer == null || obj_vec[i].VertexFrontColorBuffer == null) {
+                continue;
+            }
+            var shaderProgram;
+            if (obj_vec[i].shader=='gouraud') {
+                shaderProgram = GouraudShadingProgram;
+            }else if (obj_vec[i].shader=='flat') {
+                shaderProgram = FlatShadingProgram;
+            } else {
+                shaderProgram = PhongShadingProgram; // default: phong shading
+            }
+            gl.useProgram(shaderProgram);
+
+            mat4.perspective(45, gl.viewportWidth / gl.viewportHeight, 0.1, 100.0, obj_vec[i].pMatrix);
+            mat4.identity(obj_vec[i].mvMatrix);
+
+            obj_vec[i].translation();
+            obj_vec[i].rotation();
+            obj_vec[i].scale();
+            obj_vec[i].shear();
+            // setMatrixUniforms(obj_vec[i]);
+            gl.uniformMatrix4fv(shaderProgram.pMatrixUniform, false, obj_vec[i].pMatrix);
+            gl.uniformMatrix4fv(shaderProgram.mvMatrixUniform, false, obj_vec[i].mvMatrix);
+
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, obj_vec[i].VertexPositionBuffer);
+            gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, obj_vec[i].VertexPositionBuffer.itemSize,  gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, obj_vec[i].VertexFrontColorBuffer);
+            gl.vertexAttribPointer(shaderProgram.vertexFrontColorAttribute, obj_vec[i].VertexFrontColorBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, obj_vec[i].VertexNormalBuffer);
+            gl.vertexAttribPointer(shaderProgram.vertexNormalAttribute, obj_vec[i].VertexNormalBuffer.itemSize, gl.FLOAT, false, 0, 0);
+
+            gl.uniform3fv(shaderProgram.light_locations, light_locations);
+            gl.uniform3fv(shaderProgram.light_colors, light_colors);
+            gl.uniform3fv(shaderProgram.light_kdkscd, light_kdkscd);
+            gl.uniform1f(shaderProgram.Ka, ka);
+            gl.uniform1f(shaderProgram.Kd, obj_vec[i].Kd);
+            gl.uniform1f(shaderProgram.Ks, obj_vec[i].Ks);
+            gl.uniform1f(shaderProgram.Cd, obj_vec[i].Cd);
+            gl.uniform3fv(shaderProgram.ambiet_light_color, ambiet_light_color);
+
+            // gl.uniform1f( gl.getUniformLocation(shaderProgram, "volume"), frequencyData[Math.floor(256 / 7) * i] / 625 );
+            gl.drawArrays(gl.TRIANGLES, 0, obj_vec[i].VertexPositionBuffer.numItems);
+        }
+    }
+
+    function tick() {
+        requestAnimFrame(tick);
+        drawScene();
+
+        analyser.getByteFrequencyData(frequencyData);
+        
+        if(rotate_flag){
+            rotate_objects();
+        }
+
+        if(random_light_flag){
+            random_light();
+        }
+        
+    }
+
+    function webGLStart() {
+        var canvas = document.getElementById("ICG-canvas");
+        initGL(canvas);
+        FlatShadingProgram = initShaders(FlatShading);
+        PhongShadingProgram = initShaders(PhongShading);
+        GouraudShadingProgram = initShaders(GouraudShading);
+
+        for(var i=0 ; i<3 ; i+=1){
+            obj_vec.push( new CGObject(i, obj_names[i], obj_default_trans[i], obj_default_rotate[i], 
+                                       obj_default_scale[i], obj_scale[i], obj_default_shear, obj_default_shading[i]));
+            obj_vec[i].Kd = 0.6;
+            obj_vec[i].Ks= 0.3;
+            obj_vec[i].Cd = 20.0;
+
+            loadObj(obj_vec[i]);
+        }
+        gl.clearColor(ka*ambiet_light_color[0], ka*ambiet_light_color[1], ka*ambiet_light_color[2], transparent);
+        gl.enable(gl.DEPTH_TEST);
+
+        tick();
+    }
+
+    //*************************************************
+    // Parsing parameters
+    //*************************************************
+    function update_mode(objid){
+        shader = document.getElementById(objid + "_shading").value;
+        obj_vec[objid].shader = shader;
+    }
+
+    function update_ambient_light(paramid){
+        if(paramid == 0) ka = document.getElementById("am_ka").value;
+        else
+        {
+            ambiet_light_color[0] = document.getElementById("am_lR").value;
+            ambiet_light_color[1] = document.getElementById("am_lG").value;
+            ambiet_light_color[2] = document.getElementById("am_lB").value;
+        }
+    }
+
+    function update_light_location(lightid){
+        light_locations[lightid * 3] = document.getElementById(lightid + "_llocX").value;
+        light_locations[lightid * 3 + 1] = document.getElementById(lightid + "_llocY").value;
+        light_locations[lightid * 3 + 2] = document.getElementById(lightid + "_llocZ").value;
+    }
+
+    function update_light_color(lightid){
+        light_colors[lightid * 3] = document.getElementById(lightid + "_lR").value;
+        light_colors[lightid * 3 + 1] = document.getElementById(lightid + "_lG").value;
+        light_colors[lightid * 3 + 2] = document.getElementById(lightid + "_lB").value;
+    }
+    
+    function update_trans(objid){
+        var tx = document.getElementById(objid + "_transX").value;
+        var ty = document.getElementById(objid + "_transY").value;
+        var tz = document.getElementById(objid + "_transZ").value;
+        var translation_vec = vec3.create([tx, ty, tz]);
+        for(var i = 0; i < 3; i++) {
+            obj_vec[objid].translation_vec[i] = translation_vec[i] + obj_trans[objid][i];
+        }
+    }
+
+    function update_rotate(objid){
+        var rx = document.getElementById(objid + "_rotateX").value;
+        var ry = document.getElementById(objid + "_rotateY").value;
+        var rz = document.getElementById(objid + "_rotateZ").value;
+        obj_vec[objid].rotate_vec = vec3.create([rx, ry, rz]);
+    }
+
+    function update_shear(objid){
+        var rx = document.getElementById(objid + "_shearX").value;
+        var ry = document.getElementById(objid + "_shearY").value;
+        var rz = document.getElementById(objid + "_shearZ").value;
+        obj_vec[objid].shear_vec = vec3.create([rx, ry, rz]);
+    }
+    
+    function update_scale(objid){
+        var rx = document.getElementById(objid + "_scaleX").value;
+        var ry = document.getElementById(objid + "_scaleY").value;
+        var rz = document.getElementById(objid + "_scaleZ").value;
+        obj_vec[objid].scale_vec[0] = obj_vec[objid].scale_init[0] * rx;
+        obj_vec[objid].scale_vec[1] = obj_vec[objid].scale_init[1] * ry;
+        obj_vec[objid].scale_vec[2] = obj_vec[objid].scale_init[2] * rz;
+    }
+
+    function update_Kd(objid) {
+        var tx = document.getElementById(objid + "_Kd").value
+        obj_vec[objid].Kd = tx;
+    }
+    function update_Ks(objid) {
+        var tx = document.getElementById(objid + "_Ks").value
+        obj_vec[objid].Kd = tx;
+    }
+    function update_Cd(objid) {
+        var tx = document.getElementById(objid + "_Cd").value
+        obj_vec[objid].Cd = tx;
+    }
+    function update_model(objid) {
+        model = document.getElementById(objid + "_model").value;
+        obj_vec[objid].name = model;
+        adjust_param(objid);
+        loadObj(obj_vec[objid]);
+    }
+    function adjust_param(objid) {
+        if (obj_vec[objid].name == "Teapot.json") {
+            obj_vec[objid].scale_vec = vec3.create([0.2, 0.2, 0.2]);
+            obj_vec[objid].scale_init = vec3.create([0.2, 0.2, 0.2]);
+        } else if (obj_vec[objid].name == "Fighter.json"){
+            obj_vec[objid].scale_vec = vec3.create([8., 8., 8.]);
+            obj_vec[objid].scale_init = vec3.create([8., 8., 8.]);
+        } else if (obj_vec[objid].name == "Easter.json"){
+            obj_vec[objid].scale_vec = vec3.create([3., 3., 3.]);
+            obj_vec[objid].scale_init = vec3.create([3., 3., 3.]);
+        } else {
+            obj_vec[objid].scale_vec = vec3.create([5., 5., 5.]);
+            obj_vec[objid].scale_init = vec3.create([5., 5., 5.]);
+        }
+    }
+
+</script>
+</head>
+
+<body onload="webGLStart();">
+    <audio style="position: absolute; right: 4%; bottom: 30%; z-index: 2;" id="myAudio"></audio>
+
+    <p style="position: absolute; right: 0%; top:-2%; ">
+        <canvas id="ICG-canvas" style="border: none;" width="1200" height="600" ></canvas>
+    </p>
+
+    <p style="position: absolute; left: 5%; top: 1%; max-width: 30%; min-width: 30%; ">
+
+        <h3> Lights Parameters</h3>
+        <span>Ambient Light</span>
+        <table>
+            <tr>
+                <td>Ka: <input style="max-width: 70%; vertical-align: middle;" id="am_ka" type="range" autocomplete="off" value="0.05" max="1." min="0." step="0.02" oninput="update_ambient_light(0)"></td>
+            </tr>
+            <tr>
+                <td>R: <input style="max-width: 70%; vertical-align: middle;" id="am_lR" type="range" autocomplete="off" value="1." max="1." min="0." step="0.01" oninput="update_ambient_light(1)"></td>
+                <td>G: <input style="max-width: 70%; vertical-align: middle;" id="am_lG" type="range" autocomplete="off" value="1." max="1." min="0." step="0.01" oninput="update_ambient_light(1)"></td>
+                <td>B: <input style="max-width: 70%; vertical-align: middle;" id="am_lB" type="range" autocomplete="off" value="1." max="1." min="0." step="0.01" oninput="update_ambient_light(1)"></td>
+            </tr>
+        </table>
+        </br>
+        <span>Light 1</span>
+        <table>
+            <td>light color</td>
+            <tr>
+                <td>R: <input style="max-width: 70%; vertical-align: middle;" id="0_lR" type="range" autocomplete="off" value="0." max="1." min="0." step="0.01" oninput="update_light_color(0)"></td>
+                <td>G: <input style="max-width: 70%; vertical-align: middle;" id="0_lG" type="range" autocomplete="off" value="1." max="1." min="0." step="0.01" oninput="update_light_color(0)"></td>
+                <td>B: <input style="max-width: 70%; vertical-align: middle;" id="0_lB" type="range" autocomplete="off" value="1." max="1." min="0." step="0.01" oninput="update_light_color(0)"></td>
+            </tr>
+            <td>light location</td>
+            <tr>
+                <td>X: <input style="max-width: 70%; vertical-align: middle;" id="0_llocX" type="range" autocomplete="off" value="-15." max="30." min="-20." oninput="update_light_location(0)"></td>
+                <td>Y: <input style="max-width: 70%; vertical-align: middle;" id="0_llocY" type="range" autocomplete="off" value="5." max="20." min="-20." oninput="update_light_location(0)"></td>
+                <td>Z: <input style="max-width: 70%; vertical-align: middle;" id="0_llocZ" type="range" autocomplete="off" value="-10." max="0." min="-75." oninput="update_light_location(0)"></td>
+            </tr>
+        </table>
+        </br>
+        <span>Light 2</span>
+        <table>
+            <td>light color</td>
+            <tr>
+                <td>R: <input style="max-width: 70%; vertical-align: middle;" id="1_lR" type="range" autocomplete="off" value="1." max="1." min="0." step="0.01" oninput="update_light_color(1)"></td>
+                <td>G: <input style="max-width: 70%; vertical-align: middle;" id="1_lG" type="range" autocomplete="off" value="0." max="1." min="0." step="0.01" oninput="update_light_color(1)"></td>
+                <td>B: <input style="max-width: 70%; vertical-align: middle;" id="1_lB" type="range" autocomplete="off" value="1." max="1." min="0." step="0.01" oninput="update_light_color(1)"></td>
+            </tr>
+            <td>light location</td>
+            <tr>
+                <td>X: <input style="max-width: 70%; vertical-align: middle;" id="1_llocX" type="range" autocomplete="off" value="17." max="30." min="-20." oninput="update_light_location(1)"></td>
+                <td>Y: <input style="max-width: 70%; vertical-align: middle;" id="1_llocY" type="range" autocomplete="off" value="5." max="20." min="-20." oninput="update_light_location(1)"></td>
+                <td>Z: <input style="max-width: 70%; vertical-align: middle;" id="1_llocZ" type="range" autocomplete="off" value="-10." max="0." min="-75." oninput="update_light_location(1)"></td>
+            </tr>
+        </table>
+        <span>Light 3</span>
+        <table>
+            <td>light color</td>
+            <tr>
+                <td>R: <input style="max-width: 70%; vertical-align: middle;" id="2_lR" type="range" autocomplete="off" value="1." max="1." min="0." step="0.01" oninput="update_light_color(2)"></td>
+                <td>G: <input style="max-width: 70%; vertical-align: middle;" id="2_lG" type="range" autocomplete="off" value="1." max="1." min="0." step="0.01" oninput="update_light_color(2)"></td>
+                <td>B: <input style="max-width: 70%; vertical-align: middle;" id="2_lB" type="range" autocomplete="off" value="0." max="1." min="0." step="0.01" oninput="update_light_color(2)"></td>
+            </tr>
+            <td>light location</td>
+            <tr>
+                <td>X: <input style="max-width: 70%; vertical-align: middle;" id="2_llocX" type="range" autocomplete="off" value="17." max="30." min="-20." oninput="update_light_location(2)"></td>
+                <td>Y: <input style="max-width: 70%; vertical-align: middle;" id="2_llocY" type="range" autocomplete="off" value="5." max="20." min="-20." oninput="update_light_location(2)"></td>
+                <td>Z: <input style="max-width: 70%; vertical-align: middle;" id="2_llocZ" type="range" autocomplete="off" value="-10." max="0." min="-75." oninput="update_light_location(2)"></td>
+            </tr>
+        </table>
+        
+    </p>
+    <div style="position: absolute; left: 1%; top: 65%; display: flex;">
+        <table>
+            <span>Object1</span>
+            <td>
+                <select id="0_model" autocomplete="off" oninput="update_model(0)">
+                    <option value="Car_road.json">Car_road</option>
+                    <option value="Church_s.json">Church_s</option>
+                    <option value="Csie.json">Csie</option>
+                    <option value="Easter.json">Easter</option>
+                    <option value="Fighter.json">Fighter</option>
+                    <option value="Kangaroo.json">Kangaroo</option>
+                    <option value="Mig27.json">Mig27</option>
+                    <option value="Teapot.json" selected>Teapot</option>
+                    <option value="Tomcat.json">Tomcat</option>
+                </select>
+            </td>
+            <td>
+                <select id="0_shading" autocomplete="off" oninput="update_mode(0)">
+                    <option value="flat" selected>flat</option>
+                    <option value="phong">phong</option>
+                    <option value="gouraud">gourand</option>
+                </select>
+            </td>
+            <tr>
+            <th></th>
+            <th>X axis</th>
+            <th>Y axis</th>
+            <th>Z axis</th>
+            </tr>
+            <tr>
+                <td>Trans.</td>
+                <td><input id="0_transX" type="range" autocomplete="off" value="0." max="20." min="-20." oninput="update_trans(0)"></td>
+                <td><input id="0_transY" type="range" autocomplete="off" value="0." max="20." min="-20." oninput="update_trans(0)"></td>
+                <td><input id="0_transZ" type="range" autocomplete="off" value="0." max="10." min="-20." oninput="update_trans(0)"></td>
+            </tr>
+            <tr>
+                <td>Rotate</td>
+                <td><input id="0_rotateX" type="range" autocomplete="off" value="0." max="180." min="-180." oninput="update_rotate(0)"></td>
+                <td><input id="0_rotateY" type="range" autocomplete="off" value="0." max="180." min="-180." oninput="update_rotate(0)"></td>
+                <td><input id="0_rotateZ" type="range" autocomplete="off" value="0." max="180." min="-180." oninput="update_rotate(0)"></td>
+            </tr>
+            </tr>
+            <tr>
+                <td>Shear.</td>
+                <td><input id="0_shearX" type="range" autocomplete="off" value="90." max="160." min="10." oninput="update_shear(0)"></td>
+                <td><input id="0_shearY" type="range" autocomplete="off" value="90." max="160." min="10." oninput="update_shear(0)"></td>
+                <td><input id="0_shearZ" type="range" autocomplete="off" value="90." max="160." min="10." oninput="update_shear(0)"></td>
+            </tr>
+            <tr>
+                <td>Scale.</td>
+                <td><input id="0_scaleX" type="range" autocomplete="off" value="1." max="3." min="0.1." step="0.1" oninput="update_scale(0)"></td>
+                <td><input id="0_scaleY" type="range" autocomplete="off" value="1." max="3." min="0.1" step="0.1" oninput="update_scale(0)"></td>
+                <td><input id="0_scaleZ" type="range" autocomplete="off" value="1." max="3." min="0.1" step="0.1" oninput="update_scale(0)"></td>
+            </tr>
+            <tr>
+                <td>Kd</td>
+                <td><input id="0_Kd" type="range" autocomplete="off" value="0.6" max="1." min="0." step="0.01" oninput="update_Kd(0)"></td>
+            </tr>
+            <tr>
+                <td>Ks</td>
+                <td><input id="0_Ks" type="range" autocomplete="off" value="0.3" max="1." min="0." step="0.01" oninput="update_Ks(0)"></td>
+            </tr>
+            <tr>
+                <td>Cd</td>
+                <td><input id="0_Cd" type="range" autocomplete="off" value="20.0" max="30." min="0." step="0.01" oninput="update_Cd(0)"></td>
+            </tr>
+            <tr>
+            
+        </table>
+        <table>
+            <span>Object2</span>
+            <td>
+                <select id="1_model" autocomplete="off" oninput="update_model(1)">
+                    <option value="Car_road.json">Car_road</option>
+                    <option value="Church_s.json">Church_s</option>
+                    <option value="Csie.json">Csie</option>
+                    <option value="Easter.json">Easter</option>
+                    <option value="Fighter.json">Fighter</option>
+                    <option value="Kangaroo.json">Kangaroo</option>
+                    <option value="Mig27.json">Mig27</option>
+                    <option value="Teapot.json" selected>Teapot</option>
+                    <option value="Tomcat.json">Tomcat</option>
+                </select>
+            </td>
+            <td>
+                <select id="1_shading" autocomplete="off" oninput="update_mode(1)">
+                    <option value="flat">flat</option>
+                    <option value="phong" selected>phong</option>
+                    <option value="gouraud">gourand</option>
+                </select>
+            </td> 
+            <tr>
+            <th></th>
+            <th>X axis</th>
+            <th>Y axis</th>
+            <th>Z axis</th>
+            </tr>
+            <tr>
+                <td>Trans.</td>
+                <td><input id="1_transX" type="range" autocomplete="off" value="0." max="20." min="-20." oninput="update_trans(1)"></td>
+                <td><input id="1_transY" type="range" autocomplete="off" value="0." max="20." min="-20." oninput="update_trans(1)"></td>
+                <td><input id="1_transZ" type="range" autocomplete="off" value="0." max="10." min="-20." oninput="update_trans(1)"></td>
+            </tr>
+            <tr>
+                <td>Rotate</td>
+                <td><input id="1_rotateX" type="range" autocomplete="off" value="0." max="180." min="-180." oninput="update_rotate(1)"></td>
+                <td><input id="1_rotateY" type="range" autocomplete="off" value="0." max="180." min="-180." oninput="update_rotate(1)"></td>
+                <td><input id="1_rotateZ" type="range" autocomplete="off" value="0." max="180." min="-180." oninput="update_rotate(1)"></td>
+            </tr>
+            <tr>
+                <td>Shear.</td>
+                <td><input id="1_shearX" type="range" autocomplete="off" value="90." max="160." min="10." oninput="update_shear(1)"></td>
+                <td><input id="1_shearY" type="range" autocomplete="off" value="90." max="160." min="10." oninput="update_shear(1)"></td>
+                <td><input id="1_shearZ" type="range" autocomplete="off" value="90." max="160." min="10." oninput="update_shear(1)"></td>
+            </tr>
+            <tr>
+                <td>Scale.</td>
+                <td><input id="1_scaleX" type="range" autocomplete="off" value="1." max="10." min="0.1." step="0.1" oninput="update_scale(1)"></td>
+                <td><input id="1_scaleY" type="range" autocomplete="off" value="1." max="10." min="0.1" step="0.1" oninput="update_scale(1)"></td>
+                <td><input id="1_scaleZ" type="range" autocomplete="off" value="1." max="10." min="0.1" step="0.1" oninput="update_scale(1)"></td>
+            </tr>
+            <tr>
+                <td>Kd</td>
+                <td><input id="1_Kd" type="range" autocomplete="off" value="0.6" max="1." min="0." step="0.01" oninput="update_Kd(1)"></td>
+            </tr>
+            <tr>
+                <td>Ks</td>
+                <td><input id="1_Ks" type="range" autocomplete="off" value="0.3" max="1." min="0." step="0.01" oninput="update_Ks(1)"></td>
+            </tr>
+            <tr>
+                <td>Cd</td>
+                <td><input id="1_Cd" type="range" autocomplete="off" value="30.0" max="100." min="0." step="0.01" oninput="update_Cd(1)"></td>
+            </tr>
+        </table>
+        <table>
+            <span>Object3</span>
+            <td>
+                <select id="2_model" autocomplete="off" oninput="update_model(2)">
+                    <option value="Car_road.json">Car_road</option>
+                    <option value="Church_s.json">Church_s</option>
+                    <option value="Csie.json">Csie</option>
+                    <option value="Easter.json">Easter</option>
+                    <option value="Fighter.json">Fighter</option>
+                    <option value="Kangaroo.json">Kangaroo</option>
+                    <option value="Mig27.json">Mig27</option>
+                    <option value="Teapot.json" selected>Teapot</option>
+                    <option value="Tomcat.json">Tomcat</option>
+                </select>
+            </td>
+            <td>
+                <select id="2_shading" autocomplete="off" oninput="update_mode(2)">
+                    <option value="flat">flat</option>
+                    <option value="phong">phong</option>
+                    <option value="gouraud" selected>gourand</option>
+                </select>
+            </td>
+            <tr>
+            <th></th>
+            <th>X axis</th>
+            <th>Y axis</th>
+            <th>Z axis</th>
+            </tr>
+            <tr>
+                <td>Trans.</td>
+                <td><input id="2_transX" type="range" autocomplete="off" value="0." max="20." min="-20." oninput="update_trans(2)"></td>
+                <td><input id="2_transY" type="range" autocomplete="off" value="0." max="20." min="-20." oninput="update_trans(2)"></td>
+                <td><input id="2_transZ" type="range" autocomplete="off" value="0." max="20." min="-20." oninput="update_trans(2)"></td>
+            </tr>
+            <tr>
+                <td>Rotate</td>
+                <td><input id="2_rotateX" type="range" autocomplete="off" value="0." max="180." min="-180." oninput="update_rotate(2)"></td>
+                <td><input id="2_rotateY" type="range" autocomplete="off" value="0." max="180." min="-180." oninput="update_rotate(2)"></td>
+                <td><input id="2_rotateZ" type="range" autocomplete="off" value="0." max="180." min="-180." oninput="update_rotate(2)"></td>
+            </tr>
+            <tr>
+                <td>Shear.</td>
+                <td><input id="2_shearX" type="range" autocomplete="off" value="90." max="160." min="10." oninput="update_shear(2)"></td>
+                <td><input id="2_shearY" type="range" autocomplete="off" value="90." max="160." min="10." oninput="update_shear(2)"></td>
+                <td><input id="2_shearZ" type="range" autocomplete="off" value="90." max="160." min="10." oninput="update_shear(2)"></td>
+            </tr>
+            <tr>
+                <td>Scale.</td>
+                <td><input id="2_scaleX" type="range" autocomplete="off" value="1." max="10." min="0.1." step="0.1" oninput="update_scale(2)"></td>
+                <td><input id="2_scaleY" type="range" autocomplete="off" value="1." max="10." min="0.1" step="0.1" oninput="update_scale(2)"></td>
+                <td><input id="2_scaleZ" type="range" autocomplete="off" value="1." max="10." min="0.1" step="0.1" oninput="update_scale(2)"></td>
+            </tr>
+            <tr>
+                <td>Kd</td>
+                <td><input id="2_Kd" type="range" autocomplete="off" value="0.6" max="1." min="0." step="0.01" oninput="update_Kd(2)"></td>
+            </tr>
+            <tr>
+                <td>Ks</td>
+                <td><input id="2_Ks" type="range" autocomplete="off" value="0.3" max="1." min="0." step="0.01" oninput="update_Ks(2)"></td>
+            </tr>
+            <tr>
+                <td>Cd</td>
+                <td><input id="2_Cd" type="range" autocomplete="off" value="30.0" max="100." min="0." step="0.01" oninput="update_Cd(2)"></td>
+            </tr>
+        </table>
+    </div>
+
+</body>
+</html>
